@@ -1,0 +1,228 @@
+/*******************************************************************************
+* Instrument: Monochromator testing(cPGM).
+*
+* %I
+* Written by: Kristian Soerensen (s154443@win.dtu.dk)
+* Date: June 2018
+* Origin: DTU Physics, lyngby
+* Release: McXtrace V.1.4
+* Version: 1.2
+*
+* %D
+* The following instrument serves as a testing instrument for the collimated plane grating monochromator(cPGM) as used on the MAXIV Bloch beamline.
+* The monochromator on Bloch has two operations modes, one for low energies using a normal incidence mirror, and one for higher energies, the cPGM. 
+* The following serves as a testing(and verification) instrument for the cPGM. 
+*
+* The instrument takes a energy [-E0-dE ; E0+dE] and a wanted energy and separates this wanted energy using the calculated angles.
+* The grating and pre-mirror is assumed to have a perfect reflection. 
+
+* %P
+*     E0              [kEv]  = The central energy to sample from source model.
+*     dE              [kEV]  = Spectral width to sample from source model.     
+*     r_rho           [l/mm] = Ruling density of the grating.
+*     cff             [ ]    = constant cff value for the grating.
+*     m               [ ]    = Diffraction order, used for monochromator angle. 
+*     blazed          [ ]    = If non-zero, a blazed grating will be used. If zero, a lamellar.
+*     blazed_angle    [deg]  = Blazed angle of the blazed grating. 
+*     SourceChoice    [ ]    = Choice of source. If zero = flat source. If non-zero = Undulator.
+*
+* %E
+
+*******************************************************************************/
+DEFINE INSTRUMENT Monochroamtor_testing(
+r_rho=800,m=6,E0=0.09,dE=0.03,
+blazed=1, blazed_angle=2,cff=2.25,Wanted_energy=0.08,SourceChoice=0
+)
+
+DECLARE
+%{
+   double mirror2_angle, angle_grating;
+   double Wanted_energy,m;
+   double MCAngleVariation;
+   double A,B,C,D,E,F,G,X; 
+   double Lmax, Lmin, Emax, Emin;
+   double E1st, Nper, undK;
+%}
+
+INITIALIZE
+%{
+
+/*******************************************************
+Finding wanted energy if none is given
+*******************************************************/
+if (!Wanted_energy){
+        /* If no wanted energy is given, it is assumed the wanted energy is E0. */
+        printf("Warning: No wanted energy is given. Default is E0=%f keV \n",E0);
+        Wanted_energy = E0;
+}
+/*******************************************************
+Distances used in the monochromator:
+*******************************************************/
+A = 0.064819;
+B = 0.000125;
+C = 0.043821;
+D = 0.020;
+E = 0.620;
+F = 0.042;
+G = 0.140;
+X = 0.072746;
+/*******************************************************
+Calculating the angle for the monochromator. For motivation, see Urpelainen, Samuli 2014.
+*******************************************************/
+
+if (cff && blazed){
+            double cPGM_wl,cPGM_rho, cPGM_a,cPGM_b,cPGM_c,cPGM_beta,cPGM_alpha;
+            cPGM_wl = (12.398/Wanted_energy)*pow(10,-10);
+            cPGM_rho = 1/(r_rho*1000);
+            cPGM_a = (1-pow(cff,2));
+            cPGM_b = 2*pow(cff,2)*(m*cPGM_wl/cPGM_rho);
+            cPGM_c = pow(cff,2)-1-pow(cff,2)*((pow(m,2)*pow(cPGM_wl,2))/pow(cPGM_rho,2)); 
+            cPGM_beta = asin((-cPGM_b+sqrt(pow(cPGM_b,2)-4*cPGM_a*cPGM_c))/(2*cPGM_a));      
+            cPGM_alpha =acos(cos(cPGM_beta)/cff);
+            cPGM_beta = cPGM_beta*RAD2DEG;
+            cPGM_alpha = cPGM_alpha*RAD2DEG;
+            angle_grating = (cPGM_beta+90);   
+            mirror2_angle = ((90+angle_grating-cPGM_alpha))/2;
+            printf("a=%f, b=%f, c=%f, beta=%f, alpha=%f,PG=%f, M2%f \n",cPGM_a,cPGM_b,cPGM_c,cPGM_beta,cPGM_alpha,angle_grating,mirror2_angle);
+} else {
+            printf("Error. The cPGM testing instrument is used for blazed gratings only.");
+            exit(-1);
+}
+printf("Input specs: \n     Wanted energy: %f keV. \n     Grating order: %f. \n     Wanted wavelength: %f AA. \n",Wanted_energy,m,12.398/Wanted_energy);
+printf("\nMonochromator specs: \n     Angle of pre-mirror=%f deg. \n     Angle of grating=%f deg. \n",mirror2_angle,angle_grating);
+//Here, in testing the monochromator the MC angle need to be "big enough". 
+MCAngleVariation=angle_grating*2; 
+
+Emin=(Wanted_energy-dE)/4;
+Emax=(Wanted_energy+dE)*4;
+Lmax=12.398/Emax;
+Lmin=12.398/Emin;
+
+if (Wanted_energy<0.025){
+printf("Warning. Energy below recommended value.(%f)\n",Wanted_energy);
+} else if (Wanted_energy>1) {
+printf("Warning. Energy above recommended value.(%f)\n",Wanted_energy);
+}
+if (mirror2_angle>21){
+printf("Warning. Angle of pre-mirror is higher than allowed value on Bloch.(%f)\n",mirror2_angle);
+}
+if (angle_grating>30){
+printf("Warning. Angle of grating is higher than allowed value on Bloch.(%f)\n",angle_grating);
+}
+
+if (blazed_angle==2 && r_rho==800){
+printf("Grating PG1 is used.\n") ;
+}
+else if(blazed_angle==6 && r_rho==2000){
+printf("Grating PG2 is used.\n"); 
+}
+else {
+printf("Grating not in use on Bloch");
+}
+
+E1st=1.0018*Wanted_energy/7;
+undK=5.6;
+Nper=187;
+%}
+
+TRACE
+COMPONENT origin = Progress_bar()
+AT (0, 0, 0) RELATIVE ABSOLUTE
+
+COMPONENT source_flat = Source_flat(
+    yheight=0.001,xwidth=0.001,dist=2,focus_xw=0.0001,focus_yh=0.0001,E0=E0,dE=dE)
+WHEN (!SourceChoice)
+AT (0, 0, 0) RELATIVE origin
+
+COMPONENT dmu = Undulator(verbose=1,E0=E0,dE=dE,Ee=1.5,dEe=((6e-9)*(60e-12))/1.5,Ie=0.5,tbunch=43,K=undK,gap=14e-3,Nper=Nper, 
+    lu=84e-3,sigey=1.3e-5,sigex=185e-5,sigepx=32e-6,sigepy=4.6e-6,focus_xw=1.1e-4,focus_yh=1.1e-4,dist=2,E1st=E1st)
+WHEN (SourceChoice)
+AT(0,0,0) RELATIVE origin
+/*******************************************************
+Monitors before:
+*******************************************************/
+
+COMPONENT Mbefore_E_monitor = E_monitor(filename="Mbefore_E_monitor", xwidth=0.06,yheight=0.1,Emin=Emin,Emax=Emax,restore_xray=1)
+AT (0, 0, 0.5) RELATIVE PREVIOUS
+
+COMPONENT Mbefore_wl_monitor = L_monitor(filename="Mbefore_wl_monitor",xwidth=0.06,yheight=0.1,Lmin=Lmin,Lmax=Lmax,restore_xray=1)
+AT (0, 0, 0) RELATIVE PREVIOUS
+
+COMPONENT Mbefore_psd_monitor = PSD_monitor(filename="Mbefore_psd_monitor",nx = 100,ny = 10,xwidth=0.1,yheight=0.1,restore_xray=1)
+AT (0, 0, 0) RELATIVE PREVIOUS
+/*******************************************************
+Monochroamator:
+*******************************************************/
+COMPONENT PG1_arm= Arm()
+AT(0,F,2) RELATIVE origin
+ROTATED (0,0,0) RELATIVE origin
+
+COMPONENT M2_rotation_arm1= Arm()
+AT(0,A-F,B) RELATIVE PG1_arm
+ROTATED (-mirror2_angle,0,0) RELATIVE PG1_arm
+
+COMPONENT M2_rotation_arm2= Arm()
+AT(0,0,-D-(E/2)) RELATIVE M2_rotation_arm1
+ROTATED (0,0,0) RELATIVE M2_rotation_arm1
+
+COMPONENT M2_rotation_arm3= Arm()
+AT(0,-C,0) RELATIVE M2_rotation_arm2
+ROTATED (0,0,0) RELATIVE M2_rotation_arm2
+
+COMPONENT mirror2 = Mirror(
+zdepth=0.57,xwidth=0.15,R0=1) 
+AT (0, 0, 0) RELATIVE M2_rotation_arm3
+ROTATED (0,0, 0) RELATIVE M2_rotation_arm3
+
+COMPONENT Plane_grating = MultiPurpose_grating(
+MCangleVariation=MCAngleVariation,blazed=blazed,display=0,blazed_angle=blazed_angle,zdepth=0.136,xwidth=0.15,R0=1,r_rho=r_rho,b=0,N_slits=0,d=0)
+AT (0, 0, 0) RELATIVE PG1_arm
+ROTATED (-angle_grating,0, 0) RELATIVE PG1_arm
+/*******************************************************
+Monitors after:
+*******************************************************/
+COMPONENT Monochromator_Monitor_arm= Arm()
+AT(0,0,0) RELATIVE PG1_arm 
+ROTATED (0,0,0) RELATIVE PG1_arm
+
+// close
+COMPONENT Close_wl_monitor1 = L_monitor(filename="Closewl_monitor2",xwidth=0.8,yheight=0.8,Lmin=Lmin,Lmax=Lmax,restore_xray=1)
+AT (0, 0, 0.4) RELATIVE Monochromator_Monitor_arm
+ROTATED (0,0,90) RELATIVE Monochromator_Monitor_arm
+
+COMPONENT close_E_monitor1 = E_monitor(filename="CloseE_monitor", xwidth=0.8,yheight=0.8,Emin=Emin,Emax=Emax,restore_xray=1)
+AT (0, 0, 0) RELATIVE PREVIOUS
+ROTATED (0,0,90) RELATIVE Monochromator_Monitor_arm
+
+COMPONENT close_psd_monitor2 = PSD_monitor(filename="Close_psd_monitor",nx = 50,ny = 20,xwidth=0.8,yheight=0.8,restore_xray=1)
+AT (0, 0, 0) RELATIVE PREVIOUS
+ROTATED (0,0,90) RELATIVE Monochromator_Monitor_arm
+
+// far
+COMPONENT Far_E_monitor2 = E_monitor(filename="Far_E_monitor", xwidth=0.1,yheight=0.1,Emin=Emin,Emax=Emax,restore_xray=1)
+AT (0, 0, 15) RELATIVE Monochromator_Monitor_arm
+ROTATED (0,0,90) RELATIVE Monochromator_Monitor_arm
+
+COMPONENT Fardivergence_monitor = Divergence_monitor(
+    filename="FarDivergence", 
+    xwidth=0.1, 
+    yheight=0.1, 
+    restore_xray=1)
+AT (0, 0, 0) RELATIVE PREVIOUS
+ROTATED (0,0,90) RELATIVE Monochromator_Monitor_arm
+
+COMPONENT Far_wl_monitor2 = L_monitor(filename="far_wl_monitor",xwidth=0.1,yheight=0.1,Lmin=Lmin,Lmax=Lmax,restore_xray=1)
+AT (0, 0, 0) RELATIVE PREVIOUS
+ROTATED (0,0,90) RELATIVE Monochromator_Monitor_arm
+
+
+COMPONENT Far_psd_monitor2 = PSD_monitor(filename="far_psd_monitor",nx = 50,ny = 20,xwidth=0.1,yheight=0.1,restore_xray=1)
+AT (0, 0, 0) RELATIVE PREVIOUS
+ROTATED (0,0,90) RELATIVE Monochromator_Monitor_arm
+
+
+FINALLY
+%{
+%}
+
+END
